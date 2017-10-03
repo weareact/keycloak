@@ -17,6 +17,8 @@
 
 package org.keycloak.protocol.oidc;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import org.jboss.logging.Logger;
 import org.keycloak.cluster.ClusterProvider;
 import org.keycloak.common.ClientConnection;
@@ -69,6 +71,8 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 import java.security.PublicKey;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -77,6 +81,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.codec.binary.Hex;
 
 /**
  * Stateless object that creates tokens and manages oauth access codes
@@ -647,7 +653,12 @@ public class TokenManager {
 
     public String encodeToken(KeycloakSession session, RealmModel realm, Object token) {
         KeyManager.ActiveRsaKey activeRsaKey = session.keys().getActiveRsaKey(realm);
-        return new JWSBuilder().type(JWT).kid(activeRsaKey.getKid()).jsonContent(token).sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
+        return new JWSBuilder()
+                .type(JWT)
+                .kid(activeRsaKey.getKid())
+                .x5t(getX5T(activeRsaKey.getCertificate()))
+                .jsonContent(token)
+                .sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
     }
 
     public AccessTokenResponseBuilder responseBuilder(RealmModel realm, ClientModel client, EventBuilder event, KeycloakSession session, UserSessionModel userSession, AuthenticatedClientSessionModel clientSession) {
@@ -771,7 +782,12 @@ public class TokenManager {
 
             AccessTokenResponse res = new AccessTokenResponse();
             if (accessToken != null) {
-                String encodedToken = new JWSBuilder().type(JWT).kid(activeRsaKey.getKid()).jsonContent(accessToken).sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
+                String encodedToken = new JWSBuilder()
+                        .type(JWT)
+                        .kid(activeRsaKey.getKid())
+                        .x5t(getX5T(activeRsaKey.getCertificate()))
+                        .jsonContent(accessToken)
+                        .sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
                 res.setToken(encodedToken);
                 res.setTokenType("bearer");
                 res.setSessionState(accessToken.getSessionState());
@@ -789,11 +805,21 @@ public class TokenManager {
             }
 
             if (idToken != null) {
-                String encodedToken = new JWSBuilder().type(JWT).kid(activeRsaKey.getKid()).jsonContent(idToken).sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
+                String encodedToken = new JWSBuilder()
+                        .type(JWT)
+                        .kid(activeRsaKey.getKid())
+                        .x5t(getX5T(activeRsaKey.getCertificate()))
+                        .jsonContent(idToken)
+                        .sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
                 res.setIdToken(encodedToken);
             }
             if (refreshToken != null) {
-                String encodedToken = new JWSBuilder().type(JWT).kid(activeRsaKey.getKid()).jsonContent(refreshToken).sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
+                String encodedToken = new JWSBuilder()
+                        .type(JWT)
+                        .kid(activeRsaKey.getKid())
+                        .x5t(getX5T(activeRsaKey.getCertificate()))
+                        .jsonContent(refreshToken)
+                        .sign(jwsAlgorithm, activeRsaKey.getPrivateKey());
                 res.setRefreshToken(encodedToken);
                 if (refreshToken.getExpiration() != 0) {
                     res.setRefreshExpiresIn(refreshToken.getExpiration() - Time.currentTime());
@@ -804,6 +830,23 @@ public class TokenManager {
             res.setNotBeforePolicy(notBefore);
             return res;
         }
+    }
+
+    private String getX5T( final Certificate certificate )
+    {
+        final byte[] digest;
+		try
+		{
+			final byte[] encoded = certificate.getEncoded();
+
+            digest = MessageDigest.getInstance( "SHA-1" ).digest( encoded );
+		}
+		catch ( CertificateEncodingException | NoSuchAlgorithmException ex )
+		{
+            return null;
+		}
+
+		return Base64.encodeBase64URLSafeString( Hex.encodeHexString( digest ).getBytes() );
     }
 
     public class RefreshResult {
